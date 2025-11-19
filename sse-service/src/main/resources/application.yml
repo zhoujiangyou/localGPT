@@ -1,0 +1,28 @@
+server:
+  port: 8080
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    connection-timeout: 30000
+
+spring:
+  application:
+    name: sse-push-service
+  
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+    serialization:
+      write-dates-as-timestamps: false
+  
+  mvc:
+    async:
+      request-timeout: 1800000  # 30分钟
+
+logging:
+  level:
+    root: INFO
+    com.example.sse: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
