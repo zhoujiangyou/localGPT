@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE推送测试</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .status.connected {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .status.disconnected {
+            background: #f44336;
+            color: white;
+        }
+        
+        .info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            border-left: 4px solid #2196f3;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        .btn-connect {
+            background: #4caf50;
+            color: white;
+        }
+        
+        .btn-disconnect {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-clear {
+            background: #ff9800;
+            color: white;
+        }
+        
+        .btn-test {
+            background: #2196f3;
+            color: white;
+        }
+        
+        .messages {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            height: 400px;
+            overflow-y: auto;
+            background: #fafafa;
+        }
+        
+        .message {
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        
+        .message:last-child {
+            border-bottom: none;
+        }
+        
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        
+        .message-type {
+            font-weight: bold;
+            color: #2196f3;
+        }
+        
+        .message-time {
+            color: #999;
+            font-size: 12px;
+        }
+        
+        .message-content {
+            color: #333;
+            word-break: break-word;
+        }
+        
+        .message-data {
+            background: #f5f5f5;
+            padding: 10px;
+            margin-top: 8px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        input[type="text"] {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            📡 SSE推送服务测试
+            <span class="status disconnected" id="status">未连接</span>
+        </h1>
+        
+        <div class="info">
+            <strong>客户端ID:</strong> <span id="clientId">未连接</span>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-label">接收消息数</div>
+                <div class="stat-value" id="messageCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">连接时长</div>
+                <div class="stat-value" id="connectionTime">00:00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">最后消息</div>
+                <div class="stat-value" id="lastMessageTime">-</div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="clientIdInput" placeholder="自定义客户端ID（可选）">
+            <button class="btn-connect" onclick="connect()">🔌 连接SSE</button>
+            <button class="btn-disconnect" onclick="disconnect()">❌ 断开连接</button>
+            <button class="btn-clear" onclick="clearMessages()">🗑️ 清空消息</button>
+            <button class="btn-test" onclick="sendTestData()">📤 发送测试数据</button>
+        </div>
+        
+        <h3>📨 接收到的消息：</h3>
+        <div class="messages" id="messages"></div>
+    </div>
+    
+    <script>
+        let eventSource = null;
+        let clientId = null;
+        let messageCount = 0;
+        let connectionStartTime = null;
+        let timerInterval = null;
+        
+        // 连接SSE
+        function connect() {
+            if (eventSource) {
+                alert('已经连接，请先断开');
+                return;
+            }
+            
+            const customClientId = document.getElementById('clientIdInput').value.trim();
+            const url = customClientId 
+                ? `/api/sse/subscribe?clientId=${customClientId}`
+                : '/api/sse/subscribe';
+            
+            eventSource = new EventSource(url);
+            connectionStartTime = Date.now();
+            
+            // 连接建立
+            eventSource.addEventListener('connected', function(e) {
+                clientId = e.lastEventId;
+                document.getElementById('clientId').textContent = clientId;
+                document.getElementById('status').textContent = '已连接';
+                document.getElementById('status').className = 'status connected';
+                addMessage('connected', '系统', e.data);
+                
+                // 开始计时
+                startTimer();
+            });
+            
+            // 接收普通消息
+            eventSource.onmessage = function(e) {
+                handleMessage('message', e.data);
+            };
+            
+            // 接收心跳
+            eventSource.addEventListener('heartbeat', function(e) {
+                handleMessage('heartbeat', e.data);
+            });
+            
+            // 接收自定义事件
+            eventSource.addEventListener('notification', function(e) {
+                handleMessage('notification', e.data);
+            });
+            
+            eventSource.addEventListener('alert', function(e) {
+                handleMessage('alert', e.data);
+            });
+            
+            eventSource.addEventListener('data', function(e) {
+                handleMessage('data', e.data);
+            });
+            
+            // 错误处理
+            eventSource.onerror = function(e) {
+                console.error('SSE连接错误:', e);
+                addMessage('error', '系统', '连接出现错误');
+                
+                if (eventSource.readyState === EventSource.CLOSED) {
+                    disconnect();
+                }
+            };
+        }
+        
+        // 断开连接
+        function disconnect() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            
+            document.getElementById('status').textContent = '未连接';
+            document.getElementById('status').className = 'status disconnected';
+            document.getElementById('clientId').textContent = '未连接';
+            
+            stopTimer();
+        }
+        
+        // 处理消息
+        function handleMessage(type, data) {
+            messageCount++;
+            document.getElementById('messageCount').textContent = messageCount;
+            
+            const now = new Date();
+            document.getElementById('lastMessageTime').textContent = 
+                now.toLocaleTimeString('zh-CN');
+            
+            let message = '未知消息';
+            let jsonData = null;
+            
+            try {
+                jsonData = JSON.parse(data);
+                message = jsonData.message || JSON.stringify(jsonData);
+            } catch {
+                message = data;
+            }
+            
+            addMessage(type, type, message, jsonData);
+        }
+        
+        // 添加消息到显示区域
+        function addMessage(type, eventType, content, data) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message';
+            
+            const now = new Date().toLocaleTimeString('zh-CN');
+            
+            let dataHtml = '';
+            if (data) {
+                dataHtml = `<div class="message-data">${JSON.stringify(data, null, 2)}</div>`;
+            }
+            
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <span class="message-type">[${eventType}]</span>
+                    <span class="message-time">${now}</span>
+                </div>
+                <div class="message-content">${content}</div>
+                ${dataHtml}
+            `;
+            
+            messagesDiv.insertBefore(messageDiv, messagesDiv.firstChild);
+            
+            // 限制消息数量
+            if (messagesDiv.children.length > 50) {
+                messagesDiv.removeChild(messagesDiv.lastChild);
+            }
+        }
+        
+        // 清空消息
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+            messageCount = 0;
+            document.getElementById('messageCount').textContent = '0';
+        }
+        
+        // 发送测试数据
+        async function sendTestData() {
+            const testData = {
+                type: 'notification',
+                message: '这是一条测试消息',
+                data: {
+                    testField1: '测试值1',
+                    testField2: 123,
+                    testField3: true,
+                    timestamp: new Date().toISOString()
+                },
+                priority: 1
+            };
+            
+            try {
+                const response = await fetch('/api/data/push', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(testData)
+                });
+                
+                const result = await response.json();
+                console.log('发送结果:', result);
+                
+                if (result.code === 200) {
+                    alert('测试数据发送成功！');
+                } else {
+                    alert('发送失败: ' + result.message);
+                }
+            } catch (error) {
+                alert('发送失败: ' + error.message);
+            }
+        }
+        
+        // 开始计时
+        function startTimer() {
+            stopTimer();
+            timerInterval = setInterval(() => {
+                const elapsed = Date.now() - connectionStartTime;
+                const minutes = Math.floor(elapsed / 60000);
+                const seconds = Math.floor((elapsed % 60000) / 1000);
+                document.getElementById('connectionTime').textContent = 
+                    `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            }, 1000);
+        }
+        
+        // 停止计时
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            document.getElementById('connectionTime').textContent = '00:00';
+        }
+        
+        // 页面关闭时断开连接
+        window.addEventListener('beforeunload', function() {
+            disconnect();
+        });
+    </script>
+</body>
+</html>
