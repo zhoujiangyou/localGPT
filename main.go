@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/ks3sdklib/aws-sdk-go/service/s3"
 )
@@ -14,7 +16,8 @@ import (
 // Flags
 var (
 	rootFlag       = flag.String("root", ".", "起始扫描目录")
-	extsFlag       = flag.String("ext", ".go,.py", "目标后缀，逗号分隔")
+	extsFlag       = flag.String("ext", ".go,.py", "目标后缀，逗号分隔 (若为空则匹配所有后缀)")
+	keywordsFlag   = flag.String("keywords", "", "文件名关键词，逗号分隔 (若为空则匹配所有文件)")
 	outDirFlag     = flag.String("out-dir", "results", "结果输出目录")
 	levelFlag      = flag.Int("level", 0, "聚合层级 (0表示不聚合，直接扫描root)")
 	workersFlag    = flag.Int("workers", runtime.NumCPU(), "最大并发数")
@@ -32,11 +35,14 @@ var (
 
 func main() {
 	flag.Parse()
+	startTime := time.Now()
 
 	// 1. 准备环境
 	suffixes := normalizeSuffixes(*extsFlag)
-	if len(suffixes) == 0 {
-		fmt.Fprintln(os.Stderr, "至少指定一个后缀")
+	keywords := normalizeKeywords(*keywordsFlag)
+
+	if len(suffixes) == 0 && len(keywords) == 0 {
+		fmt.Fprintln(os.Stderr, "必须指定至少一个过滤条件: -ext 或 -keywords")
 		os.Exit(1)
 	}
 
@@ -83,6 +89,7 @@ func main() {
 	close(taskCh)
 
 	var wg sync.WaitGroup
+	var globalMatchedCount int64
 
 	// 策略：如果有聚合层级，则在任务间并发；否则在单任务内并发
 	var taskWorkers int
@@ -120,20 +127,27 @@ func main() {
 				checkpointMutex.Unlock()
 
 				// 调用 processor 处理任务
-				err := processTask(taskRoot, relPath, suffixes, *outDirFlag, scanWorkers, ks3Svc, *bucketFlag, *remotePrefixFlag)
+				count, err := processTask(taskRoot, relPath, suffixes, keywords, *outDirFlag, scanWorkers, ks3Svc, *bucketFlag, *remotePrefixFlag)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "任务失败 [%s]: %v\n", relPath, err)
 				} else {
+					atomic.AddInt64(&globalMatchedCount, count)
 					checkpointMutex.Lock()
 					appendCheckpoint(*checkpointFlag, relPath)
 					completedTasks[relPath] = true
 					checkpointMutex.Unlock()
-					fmt.Printf("任务完成: %s\n", relPath)
+					fmt.Printf("任务完成: %s (Matched: %d)\n", relPath, count)
 				}
 			}
 		}()
 	}
 
 	wg.Wait()
-	fmt.Println("所有任务处理完毕")
+	
+	totalDuration := time.Since(startTime)
+	fmt.Println("--------------------------------------------------")
+	fmt.Printf("所有任务处理完毕\n")
+	fmt.Printf("全局统计 - 扫描命中文件总量: %d\n", globalMatchedCount)
+	fmt.Printf("全局统计 - 总耗时: %s\n", totalDuration)
+	fmt.Println("--------------------------------------------------")
 }

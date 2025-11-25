@@ -38,7 +38,8 @@ func findTasks(base string, targetDepth int) ([]string, error) {
 }
 
 // scanToWriter 扫描目录并将结果写入 Writer
-func scanToWriter(root string, suffixes []string, w io.Writer, workerCount int) (int64, error) {
+// keywords: 如果非空，文件名必须包含其中任意一个关键词
+func scanToWriter(root string, suffixes []string, keywords []string, w io.Writer, workerCount int) (int64, error) {
 	fileCh := make(chan string, 1024)
 	var matched int64
 	var wgWriter sync.WaitGroup
@@ -84,12 +85,35 @@ func scanToWriter(root string, suffixes []string, w io.Writer, workerCount int) 
 				}
 			} else {
 				name := entry.Name()
-				for _, ext := range suffixes {
-					if len(name) >= len(ext) && strings.EqualFold(name[len(name)-len(ext):], ext) {
-						fileCh <- path
-						atomic.AddInt64(&matched, 1)
-						break
+				
+				// 1. 后缀匹配 (OR逻辑：满足任一后缀即可)
+				// 如果 suffixes 为空，则视为不限制后缀
+				suffixMatch := len(suffixes) == 0
+				if !suffixMatch {
+					for _, ext := range suffixes {
+						if len(name) >= len(ext) && strings.EqualFold(name[len(name)-len(ext):], ext) {
+							suffixMatch = true
+							break
+						}
 					}
+				}
+
+				// 2. 关键词匹配 (OR逻辑：满足任一关键词即可)
+				// 如果 keywords 为空，则视为不限制关键词
+				keywordMatch := len(keywords) == 0
+				if !keywordMatch {
+					for _, kw := range keywords {
+						if strings.Contains(name, kw) {
+							keywordMatch = true
+							break
+						}
+					}
+				}
+
+				// 3. 综合判定 (AND逻辑)
+				if suffixMatch && keywordMatch {
+					fileCh <- path
+					atomic.AddInt64(&matched, 1)
 				}
 			}
 		}
@@ -115,6 +139,18 @@ func normalizeSuffixes(extList string) []string {
 			item = "." + item
 		}
 		out = append(out, item)
+	}
+	return out
+}
+
+func normalizeKeywords(kwList string) []string {
+	items := strings.Split(kwList, ",")
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
 	}
 	return out
 }
