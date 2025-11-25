@@ -91,6 +91,23 @@ func main() {
 	var wg sync.WaitGroup
 	var globalMatchedCount int64
 
+	// 启动进度报告协程
+	doneCh := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(2 * time.Second) // 每2秒输出一次
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				count := atomic.LoadInt64(&globalMatchedCount)
+				duration := time.Since(startTime).Round(time.Second)
+				fmt.Printf("\r[运行中] 已扫描命中: %d 文件 | 耗时: %s", count, duration)
+			case <-doneCh:
+				return
+			}
+		}
+	}()
+
 	// 策略：如果有聚合层级，则在任务间并发；否则在单任务内并发
 	var taskWorkers int
 	var scanWorkers int
@@ -127,27 +144,30 @@ func main() {
 				checkpointMutex.Unlock()
 
 				// 调用 processor 处理任务
-				count, err := processTask(taskRoot, relPath, suffixes, keywords, *outDirFlag, scanWorkers, ks3Svc, *bucketFlag, *remotePrefixFlag)
+				// 注意：这里传入 &globalMatchedCount 用于实时更新计数
+				_, err := processTaskWithCounter(taskRoot, relPath, suffixes, keywords, *outDirFlag, scanWorkers, ks3Svc, *bucketFlag, *remotePrefixFlag, &globalMatchedCount)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "任务失败 [%s]: %v\n", relPath, err)
+					// 使用 \n 换行避免覆盖进度条
+					fmt.Fprintf(os.Stderr, "\n任务失败 [%s]: %v\n", relPath, err)
 				} else {
-					atomic.AddInt64(&globalMatchedCount, count)
 					checkpointMutex.Lock()
 					appendCheckpoint(*checkpointFlag, relPath)
 					completedTasks[relPath] = true
 					checkpointMutex.Unlock()
-					fmt.Printf("任务完成: %s (Matched: %d)\n", relPath, count)
+					// 完成时如果不想刷屏，可以注释掉下面这行，或者保留
+					// fmt.Printf("\n任务完成: %s (Matched: %d)\n", relPath, count)
 				}
 			}
 		}()
 	}
 
 	wg.Wait()
+	close(doneCh)
 	
 	totalDuration := time.Since(startTime)
-	fmt.Println("--------------------------------------------------")
+	fmt.Println("\n--------------------------------------------------") // 先换行，避免覆盖最后一行的进度
 	fmt.Printf("所有任务处理完毕\n")
-	fmt.Printf("全局统计 - 扫描命中文件总量: %d\n", globalMatchedCount)
+	fmt.Printf("全局统计 - 扫描命中文件总量: %d\n", atomic.LoadInt64(&globalMatchedCount))
 	fmt.Printf("全局统计 - 总耗时: %s\n", totalDuration)
 	fmt.Println("--------------------------------------------------")
 }
